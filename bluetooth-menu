@@ -1,0 +1,497 @@
+#!/usr/bin/env bash
+#
+# A script that generates a menu that uses bluetoothctl to
+# connect to bluetooth devices and display status info.
+#
+# Based on rofi-bluetooth (https://github.com/nickclyde/rofi-bluetooth)
+# Based on wifimenu (https://github.com/podobu/wifimenu)
+
+# Copyright © 2025 Nick Clyde (clydedroid)
+# Copyright © 2025 Nicolas Lorin
+
+# This program is free software: you can redistribute it and/or modify it under the terms
+# of the GNU General Public License as published by the Free Software Foundation, either
+# version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+
+print_usage() {
+	echo -n "\
+Usage: $program_name [OPTIONS...]
+
+Displays a menu with a launcher to select a bluetooth device.
+
+Options:
+  -j, --emoji                 Use emojis instead of Nerd Fonts font for icons.
+  -J, --no-emoji              Use Nerd Fonts font instead of emojis for icons
+                              (default).
+  --no-notify                 Do not send notifications.
+
+  --wofi                      Use wofi launcher.
+  --rofi                      Use rofi launcher.
+  --wmenu                     Use wmenu launcher.
+  --dmenu                     Use dmenu launcher.
+  --bemenu                    Use bemenu launcher.
+  --walker                    Use walker launcher (default).
+  --custom LAUNCHER 1 2 3     Use launcher LAUNCHER with options for
+                              case-insensitive (1), case-sensitive (2)
+                              and password-prompt (3) input.
+
+  -h, --help                  Print this help and exit.
+  -v, --version               Print version and other info and exit.
+
+Nerd Fonts icons are used. A font can be downloaded at:
+https://www.nerdfonts.com/
+
+Dependencies:
+  - bluez-utils.
+  - bc.
+  - A menu launcher.
+
+This program is licensed under GPL-3.0-or-later.
+"
+	exit 0
+}
+
+print_about() {
+	echo -n "\
+bluetooth-menu 0.9.0
+Copyright © 2025 Nick Clyde (clydedroid)
+Copyright © 2025 Nicolas Lorin
+Official repository: https://github.com/androw/menus
+License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.
+"
+	exit 0
+}
+
+display_menu() {
+	declare form=$1
+	declare prompt="$2"
+
+	case "$launcher" in
+		'wofi')
+			case $form in
+				1) wofi --dmenu --insensitive --prompt "$prompt" ;;
+				2) wofi --dmenu --prompt "$prompt" ;;
+				3) wofi --dmenu --password --prompt "$prompt" ;;
+			esac
+			;;
+		'rofi')
+			case $form in
+				1) rofi -dmenu -i -p "$prompt" ;;
+				2) rofi -dmenu -p "$prompt" ;;
+				3) rofi -dmenu -password -p "$prompt" ;;
+			esac
+			;;
+		'wmenu')
+			case $form in
+				1) wmenu -l 10 -i -p "$prompt" ;;
+				2) wmenu -l 10 -p "$prompt" ;;
+				3) wmenu -l 10 -P -p "$prompt" ;;
+			esac
+			;;
+		'dmenu')
+			case $form in
+				1) dmenu -l 10 -i -p "$prompt" ;;
+				2) dmenu -l 10 -p "$prompt" ;;
+				3) dmenu -l 10 -p "$prompt" ;; # Cannot hide the password
+			esac
+			;;
+		'bemenu')
+			case $form in
+				1) bemenu --list 10 --ignorecase --prompt "$prompt" ;;
+				2) bemenu --list 10 --prompt "$prompt" ;;
+				3) bemenu --list 10 --password "indicator" --prompt "$prompt" ;;
+			esac
+			;;
+		'walker')
+			case $form in
+				1) walker --dmenu -k --placeholder "$prompt" ;;
+				2) walker --dmenu -f --placeholder "$prompt" ;;
+				3) walker --password --placeholder "$prompt" ;;
+			esac
+			;;
+		'custom')
+			case $form in
+				1) "${custom_opts[launcher]}" ${custom_opts[insensitive]} "$prompt" ;;
+				2) "${custom_opts[launcher]}" ${custom_opts[sensitive]} "$prompt" ;;
+				3) "${custom_opts[launcher]}" ${custom_opts[password]} "$prompt" ;;
+			esac
+			;;
+		*)
+			echo "$program_name: Unknown launcher. See variable 'launcher'." >&2
+			exit 1
+			;;
+	esac
+}
+
+send_notification() {
+	[ -z "$notifications" ] && return
+	declare specific icon
+	declare summary="$3"
+	declare body="$4"
+	# Notification category format specified by freedesktop.org
+	case "$1" in
+		1) specific='connected' ;;
+		2) specific='disconnected' ;;
+		3) specific='error' ;;
+	esac
+	# Icon naming format specified by freedesktop.org
+	case "$2" in
+		1) icon='network-wireless' ;;
+		2) icon='network-offline' ;;
+		3) icon='network-transmit-receive' ;;
+		4) icon='network-error' ;;
+	esac
+	notify-send --app-name "$program_name" --category "network.$specific" --icon "$icon" --transient "$summary" "$body"
+}
+
+# Constants
+divider="---------"
+goback="Back"
+
+# Checks if bluetooth controller is powered on
+power_on() {
+    if bluetoothctl show | grep -q "Powered: yes"; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Toggles power state
+toggle_power() {
+    if power_on; then
+        bluetoothctl power off
+        show_menu
+    else
+        if rfkill list bluetooth | grep -q 'blocked: yes'; then
+            rfkill unblock bluetooth && sleep 3
+        fi
+        bluetoothctl power on
+        show_menu
+    fi
+}
+
+# Checks if controller is scanning for new devices
+scan_on() {
+    if bluetoothctl show | grep -q "Discovering: yes"; then
+        echo $scan_on
+        return 0
+    else
+        echo $scan_off
+        return 1
+    fi
+}
+
+# Toggles scanning state
+toggle_scan() {
+    if scan_on; then
+        kill $(pgrep -f "bluetoothctl --timeout 5 scan on")
+        bluetoothctl scan off
+        show_menu
+    else
+        bluetoothctl --timeout 5 scan on
+        echo "Scanning..."
+        show_menu
+    fi
+}
+
+# Checks if controller is able to pair to devices
+pairable_on() {
+    if bluetoothctl show | grep -q "Pairable: yes"; then
+        echo $pairable_on
+        return 0
+    else
+        echo $pairable_off
+        return 1
+    fi
+}
+
+# Toggles pairable state
+toggle_pairable() {
+    if pairable_on; then
+        bluetoothctl pairable off
+        show_menu
+    else
+        bluetoothctl pairable on
+        show_menu
+    fi
+}
+
+# Checks if controller is discoverable by other devices
+discoverable_on() {
+    if bluetoothctl show | grep -q "Discoverable: yes"; then
+        echo $discoverable_on
+        return 0
+    else
+        echo $discoverable_off
+        return 1
+    fi
+}
+
+# Toggles discoverable state
+toggle_discoverable() {
+    if discoverable_on; then
+        bluetoothctl discoverable off
+        show_menu
+    else
+        bluetoothctl discoverable on
+        show_menu
+    fi
+}
+
+# Checks if a device is connected
+device_connected() {
+    device_info=$(bluetoothctl info "$1")
+    if echo "$device_info" | grep -q "Connected: yes"; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Toggles device connection
+toggle_connection() {
+    if device_connected "$1"; then
+        bluetoothctl disconnect "$1"
+        device_menu "$device"
+    else
+        bluetoothctl connect "$1"
+        device_menu "$device"
+    fi
+}
+
+# Checks if a device is paired
+device_paired() {
+    device_info=$(bluetoothctl info "$1")
+    if echo "$device_info" | grep -q "Paired: yes"; then
+        echo $paired_yes
+        return 0
+    else
+        echo $paired_no
+        return 1
+    fi
+}
+
+# Toggles device paired state
+toggle_paired() {
+    if device_paired "$1"; then
+        bluetoothctl remove "$1"
+        device_menu "$device"
+    else
+        bluetoothctl pair "$1"
+        device_menu "$device"
+    fi
+}
+
+# Checks if a device is trusted
+device_trusted() {
+    device_info=$(bluetoothctl info "$1")
+    if echo "$device_info" | grep -q "Trusted: yes"; then
+        echo $trusted_yes
+        return 0
+    else
+        echo $trusted_no
+        return 1
+    fi
+}
+
+# Toggles device connection
+toggle_trust() {
+    if device_trusted "$1"; then
+        bluetoothctl untrust "$1"
+        device_menu "$device"
+    else
+        bluetoothctl trust "$1"
+        device_menu "$device"
+    fi
+}
+
+# A submenu for a specific device that allows connecting, pairing, and trusting
+device_menu() {
+    device=$1
+
+    # Get device name and mac address
+    device_name=$(echo "$device" | cut -d ' ' -f 3-)
+    mac=$(echo "$device" | cut -d ' ' -f 2)
+
+    # Build options
+    if device_connected "$mac"; then
+        connected=$connected_yes
+    else
+        connected=$connected_no
+    fi
+    paired=$(device_paired "$mac")
+    trusted=$(device_trusted "$mac")
+    options="$connected\n$paired\n$trusted\n$divider\n$goback\n$icon_close"
+
+    # Open menu, read chosen option
+    chosen="$(echo -e "$options" | display_menu 1 "$device_name")"
+
+    # Match chosen option to command
+    case "$chosen" in
+        "" | "$divider")
+            echo "No option chosen."
+            ;;
+        "$connected")
+            toggle_connection "$mac"
+            ;;
+        "$paired")
+            toggle_paired "$mac"
+            ;;
+        "$trusted")
+            toggle_trust "$mac"
+            ;;
+        "$goback")
+            show_menu
+            ;;
+    esac
+}
+
+# Opens a menu with current bluetooth status and options to connect
+show_menu() {
+    # Get menu options
+    if power_on; then
+        power=$power_on
+
+        # Human-readable names of devices, one per line
+        # If scan is off, will only list paired devices
+        devices=$(bluetoothctl devices | grep Device | cut -d ' ' -f 3-)
+
+        # Get controller flags
+        scan=$(scan_on)
+        pairable=$(pairable_on)
+        discoverable=$(discoverable_on)
+
+        # Options passed to menu
+        options="$devices\n$divider\n$power\n$scan\n$pairable\n$discoverable\n$icon_close"
+    else
+        power=$power_off
+        options="$power\n$icon_close"
+    fi
+
+    # Open menu, read chosen option
+    chosen="$(echo -e "$options" | display_menu 1 "Device name:")"
+
+    # Match chosen option to command
+    case "$chosen" in
+        "" | "$divider")
+            echo "No option chosen."
+            ;;
+        "$power")
+            toggle_power
+            ;;
+        "$scan")
+            toggle_scan
+            ;;
+        "$discoverable")
+            toggle_discoverable
+            ;;
+        "$pairable")
+            toggle_pairable
+            ;;
+        *)
+            device=$(bluetoothctl devices | grep "$chosen")
+            # Open a submenu if a device is selected
+            if [[ $device ]]; then device_menu "$device"; fi
+            ;;
+    esac
+}
+
+############################################################ MAIN ############################################################
+
+# tr_* variables are for translation or customization (for editing in config file, not here!).
+tr_disable_message='Disable Bluetooth'
+tr_enable_message='Enable Bluetooth'
+
+# Default launcher (for editing in config file)
+launcher='walker'
+# Custom launcher options
+declare -A custom_opts
+# Default icon display (for editing in config file)
+emoji=
+# Default is to check if notify-send is installed and, if it is, enable notifications
+notifications=$(command -v notify-send &> /dev/null && echo 1)
+
+program_name="$(basename $0)"
+
+{ [ -n "$XDG_CONFIG_HOME" ] && [ -f "${XDG_CONFIG_HOME}/${program_name}/config" ] && . "${XDG_CONFIG_HOME}/${program_name}/config"; } ||
+	{ [ -f "${HOME}/.config/${program_name}/config" ] && . "${HOME}/.config/${program_name}/config"; } ||
+	{ [ -f "${HOME}/.${program_name}" ] && . "${HOME}/.${program_name}"; }
+
+# Options
+while [ -n "$1" ]; do
+		case "$1" in
+			'-h' | '--help') print_usage ;;
+			'-v' | '--version') print_about ;;
+			'-j' | '--emoji') emoji=1 ;;
+			'-J' | '--no-emoji') emoji= ;;
+			'--no-notify') notifications= ;;
+			'--wofi') launcher='wofi' ;;
+			'--rofi') launcher='rofi' ;;
+			'--wmenu') launcher='wmenu' ;;
+			'--dmenu') launcher='dmenu' ;;
+			'--bemenu') launcher='bemenu' ;;
+			'--walker') launcher='walker' ;;
+			'--custom')
+				launcher='custom'
+				custom_opts[launcher]="$2"
+				custom_opts[insensitive]="$3"
+				custom_opts[sensitive]="$4"
+				custom_opts[password]="$5"
+				shift 4
+				;;
+			*) echo "$program_name: Wrong option given. See usage with -h or --help." >&2 ; exit 1 ;;
+		esac
+		shift
+done
+
+if [ "$launcher" = 'custom' ]; then
+	[ -n "${custom_opts[launcher]}" ] &&
+	[ -n "${custom_opts[insensitive]}" ] &&
+	[ -n "${custom_opts[sensitive]}" ] &&
+	[ -n "${custom_opts[password]}" ] || {
+	echo "$program_name: Custom launcher options not defined. See usage with -h or --help." >&2
+	exit 4
+}
+fi
+
+command -v ${custom_opts[launcher]:-$launcher} &> /dev/null || {
+	echo "$program_name: The launcher selected is not installed: $launcher. See usage with -h or --help." >&2
+	exit 3
+}
+
+# Icon variables
+icon_config="${icon_config:-$([ -z "$emoji" ] && echo  || echo ⚙️)}"
+icon_close="${icon_close:-$([ -z "$emoji" ] && echo  || echo ❌)}"
+icon_check="${icon_check:-$([ -z "$emoji" ] && echo  || echo ✅)}"
+icon_eye="${icon_eye:-$([ -z "$emoji" ] && echo 󰛐 || echo 👁️)}"
+icon_eye_closed="${icon_eye_closed:-$([ -z "$emoji" ] && echo 󰛑 || echo 🙈)}"
+icon_bluetooth_enable="${icon_bluetooth_enable:-$([ -z "$emoji" ] && echo 󰂯 || echo 🌇)}"
+icon_bluetooth_disable="${icon_bluetooth_disable:-$([ -z "$emoji" ] && echo 󰂲 || echo 🌃)}"
+icon_on="${icon_on:-$([ -z "$emoji" ] && echo  || echo 🟢)}"
+icon_off="${icon_off:-$([ -z "$emoji" ] && echo  || echo 🔴)}"
+
+# Messages with icons
+power_on="$icon_bluetooth_disable $tr_disable_message"
+power_off="$icon_bluetooth_enable $tr_enable_message"
+connected_yes="  Disconnect"
+connected_no="󰂱 Connect"
+discoverable_on="$icon_eye_closed Become Discoverable"
+discoverable_off="$icon_eye Become Invisible"
+pairable_on="Pairable: 󰲔 "
+pairable_off="Pairable: 󰌸 "
+paired_yes="󰌸 Unpair"
+paired_no="󰌷 Pair"
+trusted_yes="Trusted:  "
+trusted_no="Trusted:  "
+scan_on=" Disable scanning"
+scan_off=" Scan for devices"
+
+show_menu
