@@ -129,9 +129,9 @@ display_menu() {
 			;;
 		'walker')
 			case $form in
-				1) walker --dmenu -k --placeholder "$prompt" ;;
-				2) walker --dmenu -f --placeholder "$prompt" ;;
-				3) walker --password --placeholder "$prompt" ;;
+				1) walker --new --dmenu -k --placeholder "$prompt" ;;
+				2) walker --new --dmenu -f --placeholder "$prompt" ;;
+				3) walker --new --password --placeholder "$prompt" ;;
 			esac
 			;;
 		'custom')
@@ -724,7 +724,7 @@ command -v ${custom_opts[launcher]:-$launcher} &> /dev/null || {
 }
 
 # Icon variables
-icon_dragon="${icon_dragon:-$([ -z "$emoji" ] && echo   || echo 🐉)}"
+icon_dragon="${icon_dragon:-$([ -z "$emoji" ] && echo  || echo 🐉)}"
 icon_config="${icon_config:-$([ -z "$emoji" ] && echo  || echo ⚙️)}"
 icon_close="${icon_close:-$([ -z "$emoji" ] && echo  || echo ❌)}"
 icon_check="${icon_check:-$([ -z "$emoji" ] && echo  || echo ✅)}"

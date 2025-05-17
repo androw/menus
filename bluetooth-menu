@@ -111,9 +111,9 @@ display_menu() {
 			;;
 		'walker')
 			case $form in
-				1) walker --dmenu -k --placeholder "$prompt" ;;
-				2) walker --dmenu -f --placeholder "$prompt" ;;
-				3) walker --password --placeholder "$prompt" ;;
+				1) walker --new --dmenu -k --placeholder "$prompt" ;;
+				2) walker --new --dmenu -f --placeholder "$prompt" ;;
+				3) walker --new --password --placeholder "$prompt" ;;
 			esac
 			;;
 		'custom')
@@ -153,7 +153,7 @@ send_notification() {
 
 # Constants
 divider="---------"
-goback="Back"
+
 
 # Checks if bluetooth controller is powered on
 power_on() {
@@ -377,7 +377,7 @@ show_menu() {
     fi
 
     # Open menu, read chosen option
-    chosen="$(echo -e "$options" | display_menu 1 "Device name:")"
+    chosen="$(echo -e "$options" | display_menu 1 $tr_main_menu_prompt)"
 
     # Match chosen option to command
     case "$chosen" in
@@ -409,6 +409,20 @@ show_menu() {
 # tr_* variables are for translation or customization (for editing in config file, not here!).
 tr_disable_message='Disable Bluetooth'
 tr_enable_message='Enable Bluetooth'
+tr_disable_discoverability_message='Become Invisible'
+tr_enable_discoverability_message='Become Discoverable'
+tr_disconnect_message='Disconnect'
+tr_connect_message='Connect'
+tr_unpair_message='Unpair'
+tr_pair_message='Pair'
+tr_disable_pairing_message="Disable Pairing"
+tr_enable_pairing_message="Enable Pairing"
+tr_trust_del_message="Remove trust"
+tr_trust_add_message="Trust device"
+tr_disable_scanning_message="Disable scanning"
+tr_enable_scanning_message="Scan for devices"
+
+tr_main_menu_prompt='Device name:'
 
 # Default launcher (for editing in config file)
 launcher='walker'
@@ -477,21 +491,31 @@ icon_bluetooth_enable="${icon_bluetooth_enable:-$([ -z "$emoji" ] && echo 󰂯 |
 icon_bluetooth_disable="${icon_bluetooth_disable:-$([ -z "$emoji" ] && echo 󰂲 || echo 🌃)}"
 icon_on="${icon_on:-$([ -z "$emoji" ] && echo  || echo 🟢)}"
 icon_off="${icon_off:-$([ -z "$emoji" ] && echo  || echo 🔴)}"
+icon_back="${icon_back:-$([ -z "$emoji" ] && echo  || echo 👈)}"
+
+icon_connected="${icon_connected:-$([ -z "$emoji" ] && echo 󰂱 || echo ✅)}"
+icon_paired="${icon_paired:-$([ -z "$emoji" ] && echo 󰌷 || echo 🔗)}"
+icon_unpaired="${icon_unpaired:-$([ -z "$emoji" ] && echo 󰌸 || echo ⛓️‍💥)}"
+icon_pairable="${icon_pairable:-$([ -z "$emoji" ] && echo 󰲔 || echo ⛓️)}"
+icon_trusted="${icon_trusted:-$([ -z "$emoji" ] && echo  || echo 🛡️)}"
+icon_untrusted="${icon_untrusted:-$([ -z "$emoji" ] && echo  || echo 🛑)}"
+icon_refresh="${icon_refresh:-$([ -z "$emoji" ] && echo  || echo 🛰️)}"
 
 # Messages with icons
 power_on="$icon_bluetooth_disable $tr_disable_message"
 power_off="$icon_bluetooth_enable $tr_enable_message"
-connected_yes="  Disconnect"
-connected_no="󰂱 Connect"
-discoverable_on="$icon_eye_closed Become Discoverable"
-discoverable_off="$icon_eye Become Invisible"
-pairable_on="Pairable: 󰲔 "
-pairable_off="Pairable: 󰌸 "
-paired_yes="󰌸 Unpair"
-paired_no="󰌷 Pair"
-trusted_yes="Trusted:  "
-trusted_no="Trusted:  "
-scan_on=" Disable scanning"
-scan_off=" Scan for devices"
+connected_yes="$icon_close $tr_disconnect_message"
+connected_no="$icon_connected $tr_connect_message"
+discoverable_on="$icon_eye_closed  $tr_disable_discoverability_message"
+discoverable_off="$icon_eye  $tr_enable_discoverability_message"
+pairable_on="$icon_unpaired  $tr_disable_pairing_message"
+pairable_off="$icon_pairable  $tr_enable_pairing_message"
+paired_yes="$icon_unpaired  $tr_unpair_message"
+paired_no="$icon_paired  $tr_pair_message"
+trusted_yes="$icon_untrusted  $tr_trust_del_message"
+trusted_no="$icon_trusted  $tr_trust_add_message"
+scan_on="$icon_close  $tr_disable_scanning_message"
+scan_off="$icon_refresh  $tr_enable_scanning_message"
+goback="$icon_back"
 
 show_menu
